@@ -1,4 +1,4 @@
-name: Build 0arc (Windows, Linux, Android)
+name: Build 0arc (Windows, Linux, Android, iOS)
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ on:
         required: true
         default: 'all'
         type: choice
-        options: [all, windows, linux, android]
+        options: [all, windows, linux, android, ios]
   push:
     tags: ['v*']
 
@@ -118,5 +118,70 @@ jobs:
         with:
           name: 0arc-android-apk
           path: android-output/*
+          if-no-files-found: warn
+  build-ios:
+    if: github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'ios'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,x86_64-apple-ios
+      - run: npm install
+      - run: npx @tauri-apps/cli icon public/icons/icon-1024.png
+      - run: npm run build
+      - name: Initialize iOS project
+        run: npx @tauri-apps/cli ios init --ci
+      - name: Build unsigned iOS archive and IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd src-tauri/gen/apple
+
+          PROJECT=$(find . -maxdepth 1 -name "*.xcodeproj" -print -quit)
+          if [ -z "$PROJECT" ]; then
+            echo "No Xcode project was generated under src-tauri/gen/apple."
+            exit 1
+          fi
+
+          xcodebuild -list -json -project "$PROJECT" > /tmp/0arc-xcode-project.json
+          SCHEME=$(python3 -c 'import json; d=json.load(open("/tmp/0arc-xcode-project.json")); p=d.get("project", d); schemes=p.get("schemes", []); print(next((s for s in schemes if s.endswith("_iOS")), schemes[0] if schemes else ""))')
+          if [ -z "$SCHEME" ]; then
+            echo "Could not find a build scheme in $PROJECT."
+            xcodebuild -list -project "$PROJECT"
+            exit 1
+          fi
+
+          echo "Building iOS scheme: $SCHEME"
+          mkdir -p build
+          xcodebuild archive \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -archivePath build/0arc.xcarchive \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+          APP_PATH=$(find build/0arc.xcarchive/Products/Applications -maxdepth 1 -name "*.app" -print -quit)
+          if [ -z "$APP_PATH" ]; then
+            echo "Xcode archive completed but no .app was found inside the archive."
+            exit 1
+          fi
+
+          mkdir -p build/Payload
+          ditto "$APP_PATH" build/Payload/0arc.app
+          (cd build && ditto -c -k --sequesterRsrc --keepParent Payload 0arc-unsigned.ipa)
+
+          mkdir -p "$GITHUB_WORKSPACE/ios-output"
+          cp build/0arc-unsigned.ipa "$GITHUB_WORKSPACE/ios-output/"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 0arc-ios-ipa
+          path: ios-output/*
           if-no-files-found: warn
 
