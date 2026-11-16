@@ -82,11 +82,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
-      - name: Install Android NDK
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+      - name: Install Android SDK platform, build tools, and NDK
         run: |
-          sdkmanager --install "ndk;26.1.10909125"
-          echo "NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> $GITHUB_ENV
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;26.1.10909125"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
@@ -98,14 +102,14 @@ jobs:
       - run: npm run build
       - name: Initialize Android project
         run: |
-          npx @tauri-apps/cli android init
+          npx @tauri-apps/cli android init --ci
           MANIFEST="src-tauri/gen/android/app/src/main/AndroidManifest.xml"
           if [ -f "$MANIFEST" ]; then
             grep -q "android.permission.INTERNET" "$MANIFEST" || sed -i '/<manifest/a \\    <uses-permission android:name="android.permission.INTERNET" />' "$MANIFEST"
             grep -q "android.permission.CAMERA" "$MANIFEST" || sed -i '/<manifest/a \\    <uses-permission android:name="android.permission.CAMERA" />' "$MANIFEST"
           fi
       - name: Build Android APK
-        run: npx @tauri-apps/cli android build --debug --apk
+        run: npx @tauri-apps/cli android build --debug --apk --ci
       - name: Collect Android APK
         run: |
           mkdir -p android-output
@@ -118,7 +122,7 @@ jobs:
 
   build-ios:
     if: github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'ios'
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -131,20 +135,51 @@ jobs:
       - run: npx @tauri-apps/cli icon public/icons/icon-1024.png
       - run: npm run build
       - name: Initialize iOS project
-        run: npx @tauri-apps/cli ios init
+        run: npx @tauri-apps/cli ios init --ci
       - name: Build unsigned iOS archive and IPA
+        shell: bash
         run: |
+          set -euo pipefail
           cd src-tauri/gen/apple
-          PROJECT=$(find . -maxdepth 1 -name "*.xcodeproj" | head -n 1)
-          SCHEME=$(xcodebuild -list -project "$PROJECT" | grep -i "_iOS" | head -n 1 | tr -d ' ')
-          test -n "$SCHEME" || SCHEME="0arc_iOS"
-          xcodebuild archive -project "$PROJECT" -scheme "$SCHEME" -archivePath build/0arc.xcarchive -configuration Release -destination "generic/platform=iOS" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+
+          PROJECT=$(find . -maxdepth 1 -name "*.xcodeproj" -print -quit)
+          if [ -z "$PROJECT" ]; then
+            echo "No Xcode project was generated under src-tauri/gen/apple."
+            exit 1
+          fi
+
+          xcodebuild -list -json -project "$PROJECT" > /tmp/0arc-xcode-project.json
+          SCHEME=$(python3 -c 'import json; d=json.load(open("/tmp/0arc-xcode-project.json")); p=d.get("project", d); schemes=p.get("schemes", []); print(next((s for s in schemes if s.endswith("_iOS")), schemes[0] if schemes else ""))')
+          if [ -z "$SCHEME" ]; then
+            echo "Could not find a build scheme in $PROJECT."
+            xcodebuild -list -project "$PROJECT"
+            exit 1
+          fi
+
+          echo "Building iOS scheme: $SCHEME"
+          mkdir -p build
+          xcodebuild archive \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -archivePath build/0arc.xcarchive \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+          APP_PATH=$(find build/0arc.xcarchive/Products/Applications -maxdepth 1 -name "*.app" -print -quit)
+          if [ -z "$APP_PATH" ]; then
+            echo "Xcode archive completed but no .app was found inside the archive."
+            exit 1
+          fi
+
           mkdir -p build/Payload
-          cp -R build/0arc.xcarchive/Products/Applications/*.app build/Payload/
-          cd build
-          zip -r 0arc-unsigned.ipa Payload
+          ditto "$APP_PATH" build/Payload/0arc.app
+          (cd build && ditto -c -k --sequesterRsrc --keepParent Payload 0arc-unsigned.ipa)
+
           mkdir -p "$GITHUB_WORKSPACE/ios-output"
-          cp 0arc-unsigned.ipa "$GITHUB_WORKSPACE/ios-output/"
+          cp build/0arc-unsigned.ipa "$GITHUB_WORKSPACE/ios-output/"
       - uses: actions/upload-artifact@v4
         with:
           name: 0arc-ios-ipa
