@@ -124,64 +124,122 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+
+      - name: Show Apple build environment
+        run: |
+          xcodebuild -version
+          swift --version
+          rustc --version
+          cargo --version
+
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios,x86_64-apple-ios
-      - run: npm install
-      - run: npx @tauri-apps/cli icon public/icons/icon-1024.png
-      - run: npm run build
-      - name: Initialize iOS project
+          targets: aarch64-apple-ios
+
+      - name: Install JavaScript dependencies
+        run: npm install
+
+      - name: Generate app icons
+        run: npx @tauri-apps/cli icon public/icons/icon-1024.png
+
+      - name: Build web frontend
+        run: npm run build
+
+      - name: Initialize Tauri iOS project
         run: npx @tauri-apps/cli ios init --ci
-      - name: Build unsigned iOS archive and IPA
+
+      - name: Build and package unsigned iOS IPA
         shell: bash
         run: |
           set -euo pipefail
           cd src-tauri/gen/apple
 
+          echo "Available Xcode projects:"
+          find . -maxdepth 1 -name "*.xcodeproj" -print
+
           PROJECT=$(find . -maxdepth 1 -name "*.xcodeproj" -print -quit)
           if [ -z "$PROJECT" ]; then
-            echo "No Xcode project was generated under src-tauri/gen/apple."
+            echo "::error::Tauri did not generate an Xcode project in src-tauri/gen/apple."
             exit 1
           fi
 
-          xcodebuild -list -json -project "$PROJECT" > /tmp/0arc-xcode-project.json
-          SCHEME=$(python3 -c 'import json; d=json.load(open("/tmp/0arc-xcode-project.json")); p=d.get("project", d); schemes=p.get("schemes", []); print(next((s for s in schemes if s.endswith("_iOS")), schemes[0] if schemes else ""))')
+          xcodebuild -list -json -project "$PROJECT" | tee /tmp/0arc-xcode-project.json
+          SCHEME=$(python3 -c 'import json; d=json.load(open("/tmp/0arc-xcode-project.json")); p=d.get("project", d); schemes=p.get("schemes", []); print(next((s for s in schemes if s.endswith("_iOS")), ""))')
           if [ -z "$SCHEME" ]; then
-            echo "Could not find a build scheme in $PROJECT."
+            echo "::error::Could not find the Tauri iOS scheme ending in _iOS."
             xcodebuild -list -project "$PROJECT"
             exit 1
           fi
 
-          echo "Building iOS scheme: $SCHEME"
+          echo "Using Xcode project: $PROJECT"
+          echo "Using iOS scheme: $SCHEME"
           mkdir -p build
+
           xcodebuild archive \
             -project "$PROJECT" \
             -scheme "$SCHEME" \
-            -archivePath build/0arc.xcarchive \
             -configuration Release \
+            -sdk iphoneos \
             -destination "generic/platform=iOS" \
+            -archivePath build/0arc.xcarchive \
+            -derivedDataPath build/DerivedData \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
+            CODE_SIGN_IDENTITY="" \
+            | tee build/xcodebuild-archive.log
 
-          APP_PATH=$(find build/0arc.xcarchive/Products/Applications -maxdepth 1 -name "*.app" -print -quit)
+          APP_PATH=$(find build/0arc.xcarchive/Products/Applications -maxdepth 1 -type d -name "*.app" -print -quit)
           if [ -z "$APP_PATH" ]; then
-            echo "Xcode archive completed but no .app was found inside the archive."
+            echo "::error::Xcode archive completed but no .app bundle was found."
+            find build/0arc.xcarchive -maxdepth 5 -print || true
             exit 1
           fi
+
+          INFO_PLIST="$APP_PATH/Info.plist"
+          if [ ! -f "$INFO_PLIST" ]; then
+            echo "::error::The archived app is missing Info.plist."
+            exit 1
+          fi
+          plutil -lint "$INFO_PLIST"
+
+          EXECUTABLE=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$INFO_PLIST")
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$INFO_PLIST")
+          if [ -z "$EXECUTABLE" ] || [ ! -f "$APP_PATH/$EXECUTABLE" ]; then
+            echo "::error::The app's executable is missing."
+            exit 1
+          fi
+          if [ "$BUNDLE_ID" != "com.zeroarc.app" ]; then
+            echo "::error::Unexpected bundle identifier: $BUNDLE_ID"
+            exit 1
+          fi
+          lipo -verify_arch arm64 "$APP_PATH/$EXECUTABLE"
+          echo "Validated app bundle: $APP_PATH"
+          echo "Bundle identifier: $BUNDLE_ID"
+          echo "Executable: $EXECUTABLE"
 
           mkdir -p build/Payload
           ditto "$APP_PATH" build/Payload/0arc.app
           (cd build && ditto -c -k --sequesterRsrc --keepParent Payload 0arc-unsigned.ipa)
 
+          IPA="$PWD/build/0arc-unsigned.ipa"
+          if [ ! -s "$IPA" ]; then
+            echo "::error::IPA packaging produced an empty or missing file."
+            exit 1
+          fi
+          unzip -t "$IPA"
+          unzip -Z1 "$IPA" | grep -Eq '^Payload/0arc\.app/Info\.plist$'
+
           mkdir -p "$GITHUB_WORKSPACE/ios-output"
-          cp build/0arc-unsigned.ipa "$GITHUB_WORKSPACE/ios-output/"
+          cp "$IPA" "$GITHUB_WORKSPACE/ios-output/0arc-unsigned.ipa"
+          shasum -a 256 "$GITHUB_WORKSPACE/ios-output/0arc-unsigned.ipa"
+          ls -lh "$GITHUB_WORKSPACE/ios-output/0arc-unsigned.ipa"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: 0arc-ios-ipa
-          path: ios-output/*
-          if-no-files-found: warn
-
+          name: 0arc-ios-unsigned-ipa
+          path: ios-output/0arc-unsigned.ipa
+          if-no-files-found: error
