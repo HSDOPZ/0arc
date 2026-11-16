@@ -7,3 +7,7 @@ coverage/
 .env*
 !.env.example
 .vercel
+
+# Tauri build artifacts
+src-tauri/target/
+src-tauri/gen/
