@@ -29,7 +29,10 @@ export const Header: React.FC = () => {
     <header className="h-12 shrink-0 border-b border-white/[0.06] bg-[#0c0c0d]/90 backdrop-blur-md px-3 sm:px-4 md:px-6 flex items-center justify-between gap-3 sticky top-0 z-20 select-none">
       {/* Left: Breadcrumb */}
       <div className="flex items-center gap-2 text-xs font-medium text-zinc-400 truncate min-w-0">
-        <span className="font-semibold text-zinc-300">0arc</span>
+        <span className="inline-flex items-center gap-1.5 font-semibold text-zinc-300">
+          <img src="/0arc-logo.svg" alt="" aria-hidden="true" className="w-5 h-5 rounded-md" />
+          <span>0arc</span>
+        </span>
         <span className="text-zinc-600">/</span>
         <span className="text-white font-medium truncate">
           {current.title}
