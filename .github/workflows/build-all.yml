@@ -198,7 +198,7 @@ jobs:
             echo "::error::Unexpected bundle identifier: $BUNDLE_ID"
             exit 1
           fi
-          lipo -verify_arch arm64 "$APP_PATH/$EXECUTABLE"
+          lipo "$APP_PATH/$EXECUTABLE" -verify_arch arm64
 
           mkdir -p "$GITHUB_WORKSPACE/ios-output"
           cp "$IPA" "$GITHUB_WORKSPACE/ios-output/0arc-unsigned.ipa"
