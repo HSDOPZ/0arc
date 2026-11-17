@@ -30,10 +30,10 @@ export const Sidebar: React.FC = () => {
       <div className="flex flex-col items-center gap-6">
         <button
           onClick={() => setActiveTab('overview')}
-          className="w-8 h-8 rounded-lg bg-white text-black flex items-center justify-center font-mono font-bold text-xs transition-transform hover:scale-105 active:scale-95"
+          className="w-8 h-8 rounded-lg overflow-hidden transition-transform hover:scale-105 active:scale-95"
           title="0arc — Overview"
         >
-          0
+          <img src="/0arc-logo.svg" alt="0arc" className="w-full h-full object-contain" />
         </button>
 
         {/* Navigation Icon Rail */}
