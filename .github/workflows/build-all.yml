@@ -26,6 +26,7 @@ jobs:
           node-version: 20
       - uses: dtolnay/rust-toolchain@stable
       - run: npm install
+      - run: npm run generate:icons
       - run: npx @tauri-apps/cli icon public/icons/icon-1024.png
       - run: npm run build
       - run: npx @tauri-apps/cli build
@@ -59,6 +60,7 @@ jobs:
           node-version: 20
       - uses: dtolnay/rust-toolchain@stable
       - run: npm install
+      - run: npm run generate:icons
       - run: npx @tauri-apps/cli icon public/icons/icon-1024.png
       - run: npm run build
       - run: npx @tauri-apps/cli build
@@ -98,6 +100,7 @@ jobs:
         with:
           node-version: 20
       - run: npm install
+      - run: npm run generate:icons
       - run: npx @tauri-apps/cli icon public/icons/icon-1024.png
       - run: npm run build
       - name: Initialize Android project
@@ -146,7 +149,9 @@ jobs:
         run: npm install
 
       - name: Generate app icons
-        run: npx @tauri-apps/cli icon public/icons/icon-1024.png
+        run: |
+          npm run generate:icons
+          npx @tauri-apps/cli icon public/icons/icon-1024.png
 
       - name: Initialize Tauri iOS project
         run: npx @tauri-apps/cli ios init --ci
