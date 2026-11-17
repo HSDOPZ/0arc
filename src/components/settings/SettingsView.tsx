@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, Suspense } from 'react';
+import React, { useState, useRef, Suspense } from 'react';
 import { useArchive } from '../../context/ArchiveContext';
 import {
   Shield,
@@ -13,21 +13,11 @@ import {
   FileText,
   Film,
   KeyRound,
-  HardDrive,
   Lock,
   Laptop,
   X,
 } from 'lucide-react';
 import { NavigationTab } from '../../types';
-import {
-  PASSWORDS_CIPHER_KEY,
-  PASSWORDS_LOCK_KEY,
-} from '../../utils/passwordVaultCrypto';
-import {
-  getStorageEstimate,
-  StorageEstimateInfo,
-  VAULT_STORAGE_KEYS,
-} from '../../utils/vaultStorage';
 import {
   decryptEncryptedBackupFile,
   isEncryptedBackupContent,
@@ -36,17 +26,6 @@ import {
 const DeviceSyncModal = React.lazy(() =>
   import('./DeviceSyncModal').then((m) => ({ default: m.DeviceSyncModal }))
 );
-
-const formatBytes = (bytes: number): string => {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB'];
-  const exponent = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
-  const value = bytes / 1024 ** exponent;
-  return `${value.toFixed(exponent === 0 ? 0 : value >= 100 ? 0 : 1)} ${units[exponent]}`;
-};
-
-const utf8Bytes = (value: unknown): number =>
-  new TextEncoder().encode(typeof value === 'string' ? value : JSON.stringify(value ?? null)).length;
 
 export const SettingsView: React.FC = () => {
   const {
@@ -91,74 +70,6 @@ export const SettingsView: React.FC = () => {
 
   // Zero-server Device Sync modal
   const [syncModalOpen, setSyncModalOpen] = useState(false);
-
-  // Live IndexedDB storage estimate
-  const [storageInfo, setStorageInfo] = useState<StorageEstimateInfo | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    const timer = window.setTimeout(() => {
-      void getStorageEstimate(VAULT_STORAGE_KEYS).then((info) => {
-        if (active) setStorageInfo(info);
-      });
-    }, 120);
-    return () => {
-      active = false;
-      clearTimeout(timer);
-    };
-  }, [tools, notes, media, passwordCount, settings]);
-
-  const fallbackToolsBytes = utf8Bytes(tools);
-  const fallbackNotesBytes = utf8Bytes(notes);
-  const fallbackMediaBytes = utf8Bytes(media);
-  const fallbackSettingsBytes = utf8Bytes(settings);
-
-  const breakdown = [
-    {
-      label: 'Tools',
-      bytes: storageInfo?.keyBytes['0arc_vault_tools'] ?? fallbackToolsBytes,
-      count: tools.length,
-    },
-    {
-      label: 'Notes',
-      bytes: storageInfo?.keyBytes['0arc_vault_notes'] ?? fallbackNotesBytes,
-      count: notes.length,
-    },
-    {
-      label: 'Watchlist',
-      bytes: storageInfo?.keyBytes['0arc_vault_media'] ?? fallbackMediaBytes,
-      count: media.length,
-    },
-    {
-      label: 'Passwords',
-      bytes:
-        (storageInfo?.keyBytes[PASSWORDS_CIPHER_KEY] ?? 0) +
-        (storageInfo?.keyBytes[PASSWORDS_LOCK_KEY] ?? 0),
-      count: passwordCount,
-    },
-    {
-      label: 'Settings',
-      bytes: storageInfo?.keyBytes['0arc_vault_settings'] ?? fallbackSettingsBytes,
-      count: 1,
-    },
-  ];
-
-  const usedBytes =
-    storageInfo?.usedBytesByVault ??
-    breakdown.reduce((sum, entry) => sum + entry.bytes, 0);
-
-  const quotaBytes =
-    storageInfo?.backend === 'indexeddb'
-      ? storageInfo.browserQuotaBytes
-      : 5 * 1024 * 1024;
-
-  const percentUsed =
-    quotaBytes && quotaBytes > 0 ? (usedBytes / quotaBytes) * 100 : 0;
-
-  const storageBarWidth =
-    quotaBytes && quotaBytes > 0
-      ? Math.min(100, Math.max(usedBytes > 0 ? 1 : 0, percentUsed))
-      : 0;
 
   const totalItems = tools.length + notes.length + media.length + passwordCount;
 
@@ -280,79 +191,8 @@ export const SettingsView: React.FC = () => {
           Settings
         </h1>
         <p className="text-xs text-zinc-400 mt-0.5">
-          Vault preferences, encrypted backups, local storage, and device sync.
+          Vault preferences, encrypted backups, and device sync.
         </p>
-      </div>
-
-      {/* Unified IndexedDB Local Storage */}
-      <div className="space-y-3">
-        <div className="flex items-center gap-2 text-xs font-semibold text-white">
-          <HardDrive className="w-3.5 h-3.5 text-zinc-400" />
-          <span>Local Storage</span>
-        </div>
-
-        <div className="surface-card rounded-xl p-4 space-y-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-[11px] font-mono text-zinc-500">
-                {storageInfo?.backend === 'localStorage'
-                  ? 'Browser localStorage · Fallback mode'
-                  : 'IndexedDB Vault Storage · Private & Offline'}
-              </p>
-              <div className="flex items-baseline gap-2 mt-1">
-                <span className="text-2xl font-semibold font-mono tabular-nums text-white">
-                  {formatBytes(usedBytes)}
-                </span>
-                <span className="text-[11px] font-mono text-zinc-500">
-                  {quotaBytes
-                    ? `of ${formatBytes(quotaBytes)} device quota`
-                    : 'Dynamic browser storage'}
-                </span>
-              </div>
-            </div>
-
-            {quotaBytes && quotaBytes > 0 && (
-              <span className="shrink-0 px-2 py-0.5 rounded border border-white/[0.08] bg-white/[0.04] text-[10px] font-mono text-zinc-300 tabular-nums">
-                {percentUsed > 0 && percentUsed < 0.1
-                  ? '<0.1%'
-                  : `${percentUsed.toFixed(1)}%`}
-              </span>
-            )}
-          </div>
-
-          {quotaBytes && quotaBytes > 0 && (
-            <div className="w-full h-1.5 bg-white/[0.05] rounded-full overflow-hidden">
-              <div
-                className="h-full rounded-full bg-white/80"
-                style={{ width: `${storageBarWidth}%` }}
-              />
-            </div>
-          )}
-
-          <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] font-mono">
-            <span className="text-zinc-200">
-              {quotaBytes
-                ? `${formatBytes(Math.max(0, quotaBytes - usedBytes))} available`
-                : 'No 5 MB localStorage cap'}
-            </span>
-            <span className="text-zinc-500">
-              Saved directly on this device
-            </span>
-          </div>
-
-          <div className="pt-3 border-t border-white/[0.06] grid grid-cols-2 sm:grid-cols-5 gap-3">
-            {breakdown.map((entry) => (
-              <div key={entry.label}>
-                <p className="text-[10px] font-mono text-zinc-500">
-                  {entry.label} <span className="text-zinc-600">({entry.count})</span>
-                </p>
-                <p className="text-[11px] font-mono text-zinc-200 tabular-nums mt-0.5">
-                  {formatBytes(entry.bytes)}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
       </div>
 
       {/* Zero-Server Device Sync */}
