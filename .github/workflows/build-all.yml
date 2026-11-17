@@ -25,7 +25,15 @@ jobs:
         with:
           node-version: 20
       - uses: dtolnay/rust-toolchain@stable
-      - run: npm install
+      - name: Install JavaScript dependencies (including optional packages)
+        run: npm install --include=optional --no-audit --no-fund
+      - name: Install and verify the Windows Tauri native CLI
+        shell: pwsh
+        run: |
+          $version = node -p "require('./node_modules/@tauri-apps/cli/package.json').version"
+          npm install --no-save --include=optional --no-audit --no-fund "@tauri-apps/cli-win32-x64-msvc@$version"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node -e "require('@tauri-apps/cli'); console.log('Windows Tauri CLI native binding loaded successfully')"
       - run: npm run generate:icons
       - run: npx @tauri-apps/cli icon public/icons/icon-1024.png
       - run: npm run build
@@ -44,7 +52,7 @@ jobs:
         with:
           name: 0arc-windows-exe
           path: windows-output/*
-          if-no-files-found: warn
+          if-no-files-found: error
 
   build-linux:
     if: github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'linux'
@@ -59,7 +67,13 @@ jobs:
         with:
           node-version: 20
       - uses: dtolnay/rust-toolchain@stable
-      - run: npm install
+      - name: Install JavaScript dependencies (including optional packages)
+        run: npm install --include=optional --no-audit --no-fund
+      - name: Install and verify the Linux Tauri native CLI
+        run: |
+          VERSION="$(node -p "require('./node_modules/@tauri-apps/cli/package.json').version")"
+          npm install --no-save --include=optional --no-audit --no-fund "@tauri-apps/cli-linux-x64-gnu@$VERSION"
+          node -e "require('@tauri-apps/cli'); console.log('Linux Tauri CLI native binding loaded successfully')"
       - run: npm run generate:icons
       - run: npx @tauri-apps/cli icon public/icons/icon-1024.png
       - run: npm run build
@@ -73,7 +87,7 @@ jobs:
         with:
           name: 0arc-linux-appimage
           path: linux-output/*
-          if-no-files-found: warn
+          if-no-files-found: error
 
   build-android:
     if: github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'android'
@@ -99,7 +113,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm install
+      - name: Install JavaScript dependencies (including optional packages)
+        run: npm install --include=optional --no-audit --no-fund
+      - name: Install and verify the Linux Tauri native CLI
+        run: |
+          VERSION="$(node -p "require('./node_modules/@tauri-apps/cli/package.json').version")"
+          npm install --no-save --include=optional --no-audit --no-fund "@tauri-apps/cli-linux-x64-gnu@$VERSION"
+          node -e "require('@tauri-apps/cli'); console.log('Linux Tauri CLI native binding loaded successfully')"
       - run: npm run generate:icons
       - run: npx @tauri-apps/cli icon public/icons/icon-1024.png
       - run: npm run build
@@ -121,7 +141,7 @@ jobs:
         with:
           name: 0arc-android-apk
           path: android-output/*
-          if-no-files-found: warn
+          if-no-files-found: error
   build-ios:
     if: github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'ios'
     runs-on: macos-15
@@ -145,8 +165,20 @@ jobs:
         with:
           targets: aarch64-apple-ios
 
-      - name: Install JavaScript dependencies
-        run: npm install
+      - name: Install JavaScript dependencies (including optional packages)
+        run: npm install --include=optional --no-audit --no-fund
+
+      - name: Install and verify the macOS Tauri native CLI
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./node_modules/@tauri-apps/cli/package.json').version")"
+          case "$(uname -m)" in
+            arm64) PACKAGE="@tauri-apps/cli-darwin-arm64" ;;
+            x86_64) PACKAGE="@tauri-apps/cli-darwin-x64" ;;
+            *) echo "::error::Unsupported macOS runner architecture: $(uname -m)"; exit 1 ;;
+          esac
+          npm install --no-save --include=optional --no-audit --no-fund "$PACKAGE@$VERSION"
+          node -e "require('@tauri-apps/cli'); console.log('macOS Tauri CLI native binding loaded successfully')"
 
       - name: Generate app icons
         run: |
