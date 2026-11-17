@@ -1,0 +1,47 @@
+name: Retry iOS hosted-runner allocation failures
+
+on:
+  workflow_run:
+    workflows: ["Build 0arc (Windows, Linux, Android, iOS)"]
+    types: [completed]
+
+permissions:
+  actions: write
+  checks: read
+
+jobs:
+  retry-unacquired-ios:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.run_attempt < 3
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Retry only iOS when GitHub never assigned a hosted runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          JOBS="$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/jobs?per_page=100&attempt=$RUN_ATTEMPT")"
+          IOS_JOB="$(jq -c '[.jobs[] | select(.name == "build-ios" and .conclusion == "cancelled" and ((.steps // []) | length == 0))] | first // empty' <<< "$JOBS")"
+
+          if [ -z "$IOS_JOB" ]; then
+            echo "No iOS job cancelled before starting. Nothing to retry."
+            exit 0
+          fi
+
+          JOB_ID="$(jq -r '.id' <<< "$IOS_JOB")"
+          ANNOTATIONS="$(gh api "repos/$GH_REPO/check-runs/$JOB_ID/annotations")"
+
+          if ! jq -e 'any(.[]; ((.message // "") | contains("The job was not acquired by Runner of type hosted")))' <<< "$ANNOTATIONS" >/dev/null; then
+            echo "The iOS job did not have the hosted-runner acquisition annotation. No retry."
+            exit 0
+          fi
+
+          echo "GitHub did not assign a hosted runner to build-ios. Retrying only that job (attempt $((RUN_ATTEMPT + 1)) of 3)."
+          gh api --method POST "repos/$GH_REPO/actions/jobs/$JOB_ID/rerun"
