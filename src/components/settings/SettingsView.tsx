@@ -16,15 +16,26 @@ import {
   Lock,
   Laptop,
   X,
+  Database,
+  RefreshCw,
 } from 'lucide-react';
 import { NavigationTab } from '../../types';
 import {
   decryptEncryptedBackupFile,
   isEncryptedBackupContent,
 } from '../../utils/encryptedBackup';
+import {
+  loadMongoSyncConfig,
+  MongoSyncConfig,
+  pushVaultToMongo,
+  saveMongoSyncConfig,
+} from '../../utils/mongoSync';
 
 const DeviceSyncModal = React.lazy(() =>
   import('./DeviceSyncModal').then((m) => ({ default: m.DeviceSyncModal }))
+);
+const SyncServerModal = React.lazy(() =>
+  import('./SyncServerModal').then((m) => ({ default: m.SyncServerModal }))
 );
 
 export const SettingsView: React.FC = () => {
@@ -40,6 +51,7 @@ export const SettingsView: React.FC = () => {
     exportAllJSON,
     exportCollectionJSON,
     exportEncryptedBackup,
+    buildFullVaultPayload,
     importJSON,
     importVaultPayload,
     clearAllData,
@@ -70,6 +82,49 @@ export const SettingsView: React.FC = () => {
 
   // Zero-server Device Sync modal
   const [syncModalOpen, setSyncModalOpen] = useState(false);
+
+  // Sync Server (MongoDB) modal & status
+  const [syncServerModalOpen, setSyncServerModalOpen] = useState(false);
+  const [mongoConfig, setMongoConfig] = useState<MongoSyncConfig | null>(null);
+  const [quickSyncing, setQuickSyncing] = useState(false);
+
+  React.useEffect(() => {
+    let active = true;
+    void loadMongoSyncConfig().then((loaded) => {
+      if (active) setMongoConfig(loaded);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleQuickMongoPush = async () => {
+    if (!mongoConfig || !mongoConfig.mongoUri.trim()) {
+      setSyncServerModalOpen(true);
+      return;
+    }
+    setQuickSyncing(true);
+    try {
+      const payload = await buildFullVaultPayload();
+      const { updatedAt } = await pushVaultToMongo(mongoConfig, payload);
+      const next: MongoSyncConfig = {
+        ...mongoConfig,
+        connected: true,
+        lastSyncedAt: updatedAt,
+      };
+      await saveMongoSyncConfig(next);
+      setMongoConfig(next);
+      addToast('Synced to MongoDB', 'success', 'Archive backed up to your sync server.');
+    } catch (err: unknown) {
+      addToast(
+        'Sync Failed',
+        'error',
+        err instanceof Error ? err.message : 'Could not push archive to MongoDB.'
+      );
+    } finally {
+      setQuickSyncing(false);
+    }
+  };
 
   const totalItems = tools.length + notes.length + media.length + passwordCount;
 
@@ -218,6 +273,62 @@ export const SettingsView: React.FC = () => {
             <Laptop className="w-3.5 h-3.5" />
             <span>Sync Device</span>
           </button>
+        </div>
+
+        <div className="surface-card rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-xs font-semibold text-white">Sync Server (MongoDB)</h3>
+              {mongoConfig?.connected ? (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-mono text-emerald-300">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  <span>Connected</span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-white/[0.04] border border-white/[0.08] text-[10px] font-mono text-zinc-400">
+                  Not Configured
+                </span>
+              )}
+              {mongoConfig?.autoSync && mongoConfig?.connected && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-white/[0.06] border border-white/[0.1] text-[10px] font-mono text-zinc-300">
+                  Auto-Sync On
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-zinc-400 mt-0.5">
+              Connect your own or another person&apos;s MongoDB server so your archive stays backed up across devices and never gets lost.
+            </p>
+            {mongoConfig?.connected && (
+              <p className="text-[10px] font-mono text-zinc-500 mt-1 truncate">
+                Vault: <span className="text-zinc-300">{mongoConfig.vaultId}</span>
+                {mongoConfig.lastSyncedAt
+                  ? ` · Last synced ${new Date(mongoConfig.lastSyncedAt).toLocaleString()}`
+                  : ''}
+              </p>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {mongoConfig?.connected && mongoConfig.mongoUri.trim() && (
+              <button
+                type="button"
+                disabled={quickSyncing}
+                onClick={handleQuickMongoPush}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.1] text-xs font-medium text-white disabled:opacity-50 transition-colors whitespace-nowrap"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${quickSyncing ? 'animate-spin' : ''}`} />
+                <span>{quickSyncing ? 'Syncing...' : 'Sync Now'}</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setSyncServerModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-black hover:bg-zinc-200 text-xs font-medium transition-colors whitespace-nowrap"
+            >
+              <Database className="w-3.5 h-3.5" />
+              <span>Sync Server</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -643,6 +754,17 @@ export const SettingsView: React.FC = () => {
           <DeviceSyncModal
             isOpen={syncModalOpen}
             onClose={() => setSyncModalOpen(false)}
+          />
+        </Suspense>
+      )}
+
+      {/* Sync Server (MongoDB) Modal */}
+      {syncServerModalOpen && (
+        <Suspense fallback={null}>
+          <SyncServerModal
+            isOpen={syncServerModalOpen}
+            onClose={() => setSyncServerModalOpen(false)}
+            onConfigUpdated={(updated) => setMongoConfig(updated)}
           />
         </Suspense>
       )}

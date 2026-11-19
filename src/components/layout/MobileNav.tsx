@@ -19,7 +19,7 @@ export const MobileNav: React.FC = () => {
 
   return (
     <nav
-      className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-white/[0.08] bg-[#0c0c0d]/95 backdrop-blur-xl pb-[env(safe-area-inset-bottom)]"
+      className="md:hidden shrink-0 w-full z-40 border-t border-white/[0.08] bg-[#0c0c0d]/95 backdrop-blur-xl pb-[env(safe-area-inset-bottom)]"
       aria-label="Primary"
     >
       <div className="flex items-stretch h-16">

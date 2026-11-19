@@ -35,7 +35,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node -e "require('@tauri-apps/cli'); console.log('Windows Tauri CLI native binding loaded successfully')"
       - name: Generate Tauri app icons
-        run: npx @tauri-apps/cli icon public/icons/icon-1024.png
+        run: npx @tauri-apps/cli icon public/icons/icon-1024.png --ios-color "#07090D"
       - name: Typecheck frontend
         run: npm run lint
       - name: Build Windows app with Tauri
@@ -94,7 +94,7 @@ jobs:
           npm install --no-save --include=optional --no-audit --no-fund "@tauri-apps/cli-linux-x64-gnu@$VERSION"
           node -e "require('@tauri-apps/cli'); console.log('Linux Tauri CLI native binding loaded successfully')"
       - name: Generate Tauri app icons
-        run: npx @tauri-apps/cli icon public/icons/icon-1024.png
+        run: npx @tauri-apps/cli icon public/icons/icon-1024.png --ios-color "#07090D"
       - name: Typecheck frontend
         run: npm run lint
       - name: Build Linux packages with Tauri
@@ -148,13 +148,43 @@ jobs:
           VERSION="$(node -p "require('./node_modules/@tauri-apps/cli/package.json').version")"
           npm install --no-save --include=optional --no-audit --no-fund "@tauri-apps/cli-linux-x64-gnu@$VERSION"
           node -e "require('@tauri-apps/cli'); console.log('Linux Tauri CLI native binding loaded successfully')"
-      - name: Generate Tauri app icons
-        run: npx @tauri-apps/cli icon public/icons/icon-1024.png
-      - name: Typecheck frontend
-        run: npm run lint
-      - name: Initialize Android project and configure permissions
+      - name: Generate Tauri icons and typecheck frontend
+        run: |
+          npx @tauri-apps/cli icon public/icons/icon-1024.png --ios-color "#07090D"
+          npm run lint
+      - name: Initialize Android project, icons, and manifest permissions
         run: |
           npx @tauri-apps/cli android init --ci --skip-targets-install
+          npx @tauri-apps/cli icon public/icons/icon-1024.png --ios-color "#07090D"
+
+          INSTALLED_API="$(ls -1 "$ANDROID_HOME/platforms" | grep -oE 'android-[0-9]+' | sed 's/android-//' | sort -n | tail -n 1)"
+          APP_GRADLE="src-tauri/gen/android/app/build.gradle.kts"
+          if [ -f "$APP_GRADLE" ]; then
+            python3 - "$APP_GRADLE" "$INSTALLED_API" <<'PY'
+          import re
+          import sys
+
+          path, installed_api = sys.argv[1], sys.argv[2]
+          with open(path, "r", encoding="utf-8") as f:
+              text = f.read()
+
+          # Enable cleartext HTTP so users can connect to LAN/self-hosted Sync Servers
+          text = text.replace(
+              'manifestPlaceholders["usesCleartextTraffic"] = "false"',
+              'manifestPlaceholders["usesCleartextTraffic"] = "true"',
+          )
+
+          # Match compileSdk / targetSdk to the highest Android SDK platform installed
+          if installed_api.isdigit():
+              text = re.sub(r'compileSdk\s*=\s*\d+', f'compileSdk = {installed_api}', text)
+              text = re.sub(r'targetSdk\s*=\s*\d+', f'targetSdk = {installed_api}', text)
+
+          with open(path, "w", encoding="utf-8") as f:
+              f.write(text)
+          print(f"Configured {path} (API {installed_api}, usesCleartextTraffic=true)")
+          PY
+          fi
+
           MANIFEST="src-tauri/gen/android/app/src/main/AndroidManifest.xml"
           if [ -f "$MANIFEST" ]; then
             python3 - "$MANIFEST" <<'PY'
@@ -186,17 +216,55 @@ jobs:
           print("Validated AndroidManifest.xml")
           PY
           fi
-      - name: Build Android APK
-        run: npx @tauri-apps/cli android build --debug --apk --ci
-      - name: Collect Android APK
+      - name: Build Android release APK
+        run: npx @tauri-apps/cli android build --apk --ci
+      - name: Align, sign, and verify Android APK
         run: |
+          set -euo pipefail
           mkdir -p android-output
-          find src-tauri/gen/android/app/build/outputs/apk -type f -name "*.apk" -exec cp {} android-output/ \; 2>/dev/null || true
+
+          RAW_APK="$(find src-tauri/gen/android/app/build/outputs/apk -type f -name '*universal*.apk' | head -n 1 || true)"
+          if [ -z "$RAW_APK" ]; then
+            RAW_APK="$(find src-tauri/gen/android/app/build/outputs/apk -type f -name '*.apk' | head -n 1 || true)"
+          fi
+          if [ -z "$RAW_APK" ] || [ ! -s "$RAW_APK" ]; then
+            echo "::error::No APK produced by Tauri Android build."
+            find src-tauri/gen/android/app/build/outputs -maxdepth 5 -print || true
+            exit 1
+          fi
+
+          BUILD_TOOLS_DIR="$(find "$ANDROID_HOME/build-tools" -maxdepth 1 -mindepth 1 -type d | sort -V | tail -n 1)"
+          ZIPALIGN="$BUILD_TOOLS_DIR/zipalign"
+          APKSIGNER="$BUILD_TOOLS_DIR/apksigner"
+
+          KEYSTORE="$RUNNER_TEMP/0arc-release.jks"
+          rm -f "$KEYSTORE"
+          keytool -genkeypair -noprompt \
+            -keystore "$KEYSTORE" \
+            -storepass "zeroarc-release" \
+            -keypass "zeroarc-release" \
+            -alias "zeroarc" \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=0arc,O=0arc,C=US"
+
+          "$ZIPALIGN" -f -p 4 "$RAW_APK" android-output/0arc-aligned.apk
+          "$APKSIGNER" sign \
+            --ks "$KEYSTORE" \
+            --ks-pass "pass:zeroarc-release" \
+            --key-pass "pass:zeroarc-release" \
+            --ks-key-alias "zeroarc" \
+            --out android-output/0arc-android.apk \
+            android-output/0arc-aligned.apk
+
+          rm -f android-output/0arc-aligned.apk android-output/*.idsig
+          "$APKSIGNER" verify --verbose android-output/0arc-android.apk
           ls -lh android-output
       - uses: actions/upload-artifact@v4
         with:
           name: 0arc-android-apk
-          path: android-output/*
+          path: android-output/0arc-android.apk
           if-no-files-found: error
 
   build-ios:
@@ -237,18 +305,29 @@ jobs:
           npm install --no-save --include=optional --no-audit --no-fund "$PACKAGE@$VERSION"
           node -e "require('@tauri-apps/cli'); console.log('macOS Tauri CLI native binding loaded successfully')"
 
-      - name: Generate app icons and typecheck frontend
+      - name: Generate Tauri icons and typecheck frontend
         run: |
-          npx @tauri-apps/cli icon public/icons/icon-1024.png
+          npx @tauri-apps/cli icon public/icons/icon-1024.png --ios-color "#07090D"
           npm run lint
 
-      - name: Initialize Tauri iOS project
+      - name: Initialize Tauri iOS project, icons, and Info.plist
         run: |
           npx @tauri-apps/cli ios init --ci
+          npx @tauri-apps/cli icon public/icons/icon-1024.png --ios-color "#07090D"
+
+          APPICON_DIR="src-tauri/gen/apple/Assets.xcassets/AppIcon.appiconset"
+          if [ ! -d "$APPICON_DIR" ] || [ -z "$(find "$APPICON_DIR" -name '*.png' -print -quit)" ]; then
+            echo "::error::iOS AppIcon.appiconset was not populated by tauri icon."
+            exit 1
+          fi
+          ls -la "$APPICON_DIR"
+
           IOS_PLIST="$(find src-tauri/gen/apple -maxdepth 3 -name 'Info.plist' -print -quit)"
           if [ -n "$IOS_PLIST" ]; then
             /usr/libexec/PlistBuddy -c "Print :NSCameraUsageDescription" "$IOS_PLIST" >/dev/null 2>&1 || \
               /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string '0arc uses the camera to scan encrypted Device Sync QR codes.'" "$IOS_PLIST"
+            /usr/libexec/PlistBuddy -c "Print :ITSAppUsesNonExemptEncryption" "$IOS_PLIST" >/dev/null 2>&1 || \
+              /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$IOS_PLIST"
             plutil -lint "$IOS_PLIST"
           fi
 
@@ -314,6 +393,10 @@ jobs:
           fi
           if [ "$BUNDLE_ID" != "com.zeroarc.app" ]; then
             echo "::error::Unexpected bundle identifier: $BUNDLE_ID"
+            exit 1
+          fi
+          if [ ! -f "$APP_PATH/Assets.car" ] && [ -z "$(find "$APP_PATH" -maxdepth 1 -name 'AppIcon*.png' -print -quit)" ]; then
+            echo "::error::Compiled app icon assets (Assets.car / AppIcon*.png) are missing from the iOS app bundle."
             exit 1
           fi
           lipo "$APP_PATH/$EXECUTABLE" -verify_arch arm64

@@ -34,6 +34,12 @@ import {
   createEncryptedBackupFile,
   VaultBackupPayload,
 } from '../utils/encryptedBackup';
+import {
+  isTauriEnvironment,
+  loadMongoSyncConfig,
+  pushVaultToMongo,
+  saveMongoSyncConfig,
+} from '../utils/mongoSync';
 
 interface ArchiveContextType {
   tools: ToolItem[];
@@ -318,11 +324,13 @@ export const ArchiveProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 hydratedSettings.defaultArchiveView !== 'overview'
               ) {
                 setActiveTabState(hydratedSettings.defaultArchiveView);
-                window.history.replaceState(
-                  { tab: hydratedSettings.defaultArchiveView },
-                  '',
-                  pathForTab(hydratedSettings.defaultArchiveView)
-                );
+                if (!isTauriEnvironment()) {
+                  window.history.replaceState(
+                    { tab: hydratedSettings.defaultArchiveView },
+                    '',
+                    pathForTab(hydratedSettings.defaultArchiveView)
+                  );
+                }
               }
             } catch {
               // ignore malformed stored settings
@@ -381,7 +389,7 @@ export const ArchiveProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const setActiveTab = useCallback((tab: NavigationTab) => {
     userNavigatedRef.current = true;
     setActiveTabState(tab);
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined' || isTauriEnvironment()) return;
     const path = pathForTab(tab);
     if (normalizePath(window.location.pathname) !== path) {
       window.history.pushState({ tab }, '', path);
@@ -389,7 +397,7 @@ export const ArchiveProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, []);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined' || isTauriEnvironment()) return;
     const path = pathForTab(activeTab);
     if (normalizePath(window.location.pathname) !== path) {
       window.history.replaceState({ tab: activeTab }, '', path);
@@ -398,6 +406,7 @@ export const ArchiveProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, []);
 
   useEffect(() => {
+    if (typeof window === 'undefined' || isTauriEnvironment()) return;
     const handlePopState = () => {
       const routedTab = tabFromPath(window.location.pathname);
       if (routedTab) {
@@ -445,6 +454,66 @@ export const ArchiveProvider: React.FC<{ children: React.ReactNode }> = ({ child
       // Gracefully handled inside vaultStorage fallback
     });
   }, [tools, notes, media, settings, isStorageHydrated]);
+
+  // Debounced Auto-Sync to MongoDB when enabled by the user
+  const autoSyncBaselineReadyRef = useRef(false);
+  const autoSyncErrorShownRef = useRef(false);
+  const latestPayloadBuilderRef = useRef<(() => Promise<VaultBackupPayload>) | null>(null);
+
+  useEffect(() => {
+    latestPayloadBuilderRef.current = async () => {
+      const passwordVault = await exportEncryptedPasswordVaultState();
+      const includePlainPasswords = !hasPasswordLock || isPasswordVaultUnlocked;
+      return {
+        version: '2.0.0',
+        exportedAt: new Date().toISOString(),
+        tools,
+        notes,
+        media,
+        settings,
+        ...(includePlainPasswords ? { passwords } : {}),
+        passwordVault,
+      };
+    };
+  }, [tools, notes, media, settings, passwords, hasPasswordLock, isPasswordVaultUnlocked]);
+
+  useEffect(() => {
+    if (!isStorageHydrated) return;
+    if (!autoSyncBaselineReadyRef.current) {
+      autoSyncBaselineReadyRef.current = true;
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const config = await loadMongoSyncConfig();
+          if (!config.autoSync || !config.connected || !config.mongoUri.trim()) return;
+          const builder = latestPayloadBuilderRef.current;
+          if (!builder) return;
+          const payload = await builder();
+          const { updatedAt } = await pushVaultToMongo(config, payload);
+          await saveMongoSyncConfig({
+            ...config,
+            connected: true,
+            lastSyncedAt: updatedAt,
+          });
+          autoSyncErrorShownRef.current = false;
+        } catch (err: unknown) {
+          if (!autoSyncErrorShownRef.current) {
+            autoSyncErrorShownRef.current = true;
+            addToast(
+              'Auto-Sync Paused',
+              'warning',
+              err instanceof Error ? err.message : 'Could not reach MongoDB sync server.'
+            );
+          }
+        }
+      })();
+    }, 2500);
+
+    return () => window.clearTimeout(timer);
+  }, [tools, notes, media, passwords, settings, isStorageHydrated, addToast]);
 
   // Global keyboard shortcuts
   useEffect(() => {

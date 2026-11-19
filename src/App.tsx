@@ -44,15 +44,15 @@ const MainContent: React.FC = () => {
   };
 
   return (
-    <div className="flex h-[100dvh] w-full bg-[#09090b] text-[#f4f4f5] overflow-hidden selection:bg-white/15 selection:text-white pt-[env(safe-area-inset-top)]">
+    <div className="fixed inset-0 flex flex-col md:flex-row w-full bg-[#09090b] text-[#f4f4f5] overflow-hidden selection:bg-white/15 selection:text-white pt-[env(safe-area-inset-top)]">
       {/* Icon-Only Sidebar Rail (desktop) */}
       <Sidebar />
 
       {/* Main View Area */}
-      <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
         <Header />
 
-        <main className="flex-1 overflow-y-auto overscroll-contain pt-4 md:pt-8 px-3 sm:px-4 md:px-8 pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-8 max-w-7xl w-full mx-auto">
+        <main className="flex-1 min-h-0 overflow-y-auto overscroll-contain pt-4 md:pt-8 px-3 sm:px-4 md:px-8 pb-6 md:pb-8 max-w-7xl w-full mx-auto">
           {renderActiveView()}
         </main>
       </div>
