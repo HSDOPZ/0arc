@@ -136,11 +136,15 @@ export const PasswordsView: React.FC = () => {
     setRevealedIds((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const handleCopyPassword = (item: PasswordItem) => {
-    navigator.clipboard.writeText(item.password);
-    setCopiedId(item.id);
-    addToast('Password Copied', 'info', `Copied password for "${item.name}".`);
-    setTimeout(() => setCopiedId((curr) => (curr === item.id ? null : curr)), 2000);
+  const handleCopyPassword = async (item: PasswordItem) => {
+    try {
+      await navigator.clipboard.writeText(item.password);
+      setCopiedId(item.id);
+      addToast('Password Copied', 'info', `Copied password for "${item.name}".`);
+      setTimeout(() => setCopiedId((curr) => (curr === item.id ? null : curr)), 2000);
+    } catch {
+      addToast('Clipboard Unavailable', 'error', 'Could not access system clipboard.');
+    }
   };
 
   const handleSaveEntry = async (data: Omit<PasswordItem, 'id' | 'createdAt' | 'updatedAt'>) => {

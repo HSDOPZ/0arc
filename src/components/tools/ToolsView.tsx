@@ -82,13 +82,18 @@ export const ToolsView: React.FC = () => {
       });
   }, [tools, searchQuery, selectedCategory, favoritesOnly, sortBy]);
 
-  const handleCopyLink = (tool: ToolItem) => {
+  const handleCopyLink = async (tool: ToolItem) => {
     if (!tool.url) return;
-    navigator.clipboard.writeText(tool.url);
-    setCopiedId(tool.id);
-    addToast('Link Copied', 'info', tool.url);
-    setTimeout(() => setCopiedId(null), 2000);
-    setActiveMenuId(null);
+    try {
+      await navigator.clipboard.writeText(tool.url);
+      setCopiedId(tool.id);
+      addToast('Link Copied', 'info', tool.url);
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch {
+      addToast('Clipboard Unavailable', 'error', 'Could not access system clipboard.');
+    } finally {
+      setActiveMenuId(null);
+    }
   };
 
   const handleSaveTool = (toolData: Omit<ToolItem, 'id' | 'createdAt' | 'updatedAt'>) => {

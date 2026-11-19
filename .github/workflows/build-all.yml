@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - uses: dtolnay/rust-toolchain@stable
       - name: Install JavaScript dependencies (including optional packages)
         run: npm install --include=optional --no-audit --no-fund
@@ -34,10 +34,12 @@ jobs:
           npm install --no-save --include=optional --no-audit --no-fund "@tauri-apps/cli-win32-x64-msvc@$version"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node -e "require('@tauri-apps/cli'); console.log('Windows Tauri CLI native binding loaded successfully')"
-      - run: npm run generate:icons
-      - run: npx @tauri-apps/cli icon public/icons/icon-1024.png
-      - run: npm run build
-      - run: npx @tauri-apps/cli build
+      - name: Generate Tauri app icons
+        run: npx @tauri-apps/cli icon public/icons/icon-1024.png
+      - name: Typecheck frontend
+        run: npm run lint
+      - name: Build Windows app with Tauri
+        run: npx @tauri-apps/cli build --ci
       - name: Collect Windows installers
         shell: pwsh
         run: |
@@ -45,9 +47,15 @@ jobs:
           Get-ChildItem -Path "src-tauri/target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue | ForEach-Object {
             Copy-Item $_.FullName "windows-output/0arc-installer.exe"
           }
+          Get-ChildItem -Path "src-tauri/target/release/bundle/msi/*.msi" -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item $_.FullName "windows-output/0arc-installer.msi"
+          }
           if (Test-Path "src-tauri/target/release/0arc.exe") {
             Copy-Item "src-tauri/target/release/0arc.exe" "windows-output/0arc-portable.exe"
+          } elseif (Test-Path "src-tauri/target/release/zeroarc.exe") {
+            Copy-Item "src-tauri/target/release/zeroarc.exe" "windows-output/0arc-portable.exe"
           }
+          Get-ChildItem -Path "windows-output"
       - uses: actions/upload-artifact@v4
         with:
           name: 0arc-windows-exe
@@ -62,10 +70,21 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libfuse2 \
+            file \
+            xdg-utils
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - uses: dtolnay/rust-toolchain@stable
       - name: Install JavaScript dependencies (including optional packages)
         run: npm install --include=optional --no-audit --no-fund
@@ -74,15 +93,20 @@ jobs:
           VERSION="$(node -p "require('./node_modules/@tauri-apps/cli/package.json').version")"
           npm install --no-save --include=optional --no-audit --no-fund "@tauri-apps/cli-linux-x64-gnu@$VERSION"
           node -e "require('@tauri-apps/cli'); console.log('Linux Tauri CLI native binding loaded successfully')"
-      - run: npm run generate:icons
-      - run: npx @tauri-apps/cli icon public/icons/icon-1024.png
-      - run: npm run build
-      - run: npx @tauri-apps/cli build
+      - name: Generate Tauri app icons
+        run: npx @tauri-apps/cli icon public/icons/icon-1024.png
+      - name: Typecheck frontend
+        run: npm run lint
+      - name: Build Linux packages with Tauri
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: npx @tauri-apps/cli build --bundles deb,appimage --ci
       - name: Collect Linux packages
         run: |
           mkdir -p linux-output
           find src-tauri/target/release/bundle/appimage -name "*.AppImage" -exec cp {} linux-output/ \; 2>/dev/null || true
           find src-tauri/target/release/bundle/deb -name "*.deb" -exec cp {} linux-output/ \; 2>/dev/null || true
+          ls -lh linux-output
       - uses: actions/upload-artifact@v4
         with:
           name: 0arc-linux-appimage
@@ -97,14 +121,18 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
           packages: platform-tools
       - name: Install Android SDK platform, build tools, and NDK
         run: |
-          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;26.1.10909125"
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          LATEST_BT="$(sdkmanager --list | grep -oE 'build-tools;[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n 1 || true)"
+          LATEST_PLATFORM="$(sdkmanager --list | grep -oE 'platforms;android-[0-9]+' | sort -V | tail -n 1 || true)"
+          sdkmanager --install "platforms;android-37" "${LATEST_BT:-build-tools;35.0.0}" "ndk;26.1.10909125" || \
+            sdkmanager --install "${LATEST_PLATFORM:-platforms;android-35}" "${LATEST_BT:-build-tools;35.0.0}" "ndk;26.1.10909125"
           echo "NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
@@ -112,7 +140,7 @@ jobs:
           targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - name: Install JavaScript dependencies (including optional packages)
         run: npm install --include=optional --no-audit --no-fund
       - name: Install and verify the Linux Tauri native CLI
@@ -120,28 +148,57 @@ jobs:
           VERSION="$(node -p "require('./node_modules/@tauri-apps/cli/package.json').version")"
           npm install --no-save --include=optional --no-audit --no-fund "@tauri-apps/cli-linux-x64-gnu@$VERSION"
           node -e "require('@tauri-apps/cli'); console.log('Linux Tauri CLI native binding loaded successfully')"
-      - run: npm run generate:icons
-      - run: npx @tauri-apps/cli icon public/icons/icon-1024.png
-      - run: npm run build
-      - name: Initialize Android project
+      - name: Generate Tauri app icons
+        run: npx @tauri-apps/cli icon public/icons/icon-1024.png
+      - name: Typecheck frontend
+        run: npm run lint
+      - name: Initialize Android project and configure permissions
         run: |
-          npx @tauri-apps/cli android init --ci
+          npx @tauri-apps/cli android init --ci --skip-targets-install
           MANIFEST="src-tauri/gen/android/app/src/main/AndroidManifest.xml"
           if [ -f "$MANIFEST" ]; then
-            grep -q "android.permission.INTERNET" "$MANIFEST" || sed -i '/<manifest/a \\    <uses-permission android:name="android.permission.INTERNET" />' "$MANIFEST"
-            grep -q "android.permission.CAMERA" "$MANIFEST" || sed -i '/<manifest/a \\    <uses-permission android:name="android.permission.CAMERA" />' "$MANIFEST"
+            python3 - "$MANIFEST" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          path = sys.argv[1]
+          with open(path, "r", encoding="utf-8") as f:
+              text = f.read()
+
+          additions = []
+          if "android.permission.INTERNET" not in text:
+              additions.append('    <uses-permission android:name="android.permission.INTERNET" />')
+          if "android.permission.CAMERA" not in text:
+              additions.append('    <uses-permission android:name="android.permission.CAMERA" />')
+          if "android.hardware.camera" not in text:
+              additions.append('    <uses-feature android:name="android.hardware.camera" android:required="false" />')
+
+          if additions:
+              marker = "<application"
+              idx = text.find(marker)
+              if idx == -1:
+                  raise RuntimeError("Could not find <application in AndroidManifest.xml")
+              text = text[:idx] + "\n".join(additions) + "\n    " + text[idx:]
+              with open(path, "w", encoding="utf-8") as f:
+                  f.write(text)
+
+          ET.parse(path)
+          print("Validated AndroidManifest.xml")
+          PY
           fi
       - name: Build Android APK
         run: npx @tauri-apps/cli android build --debug --apk --ci
       - name: Collect Android APK
         run: |
           mkdir -p android-output
-          find src-tauri/gen/android -name "*.apk" -exec cp {} android-output/ \; 2>/dev/null || true
+          find src-tauri/gen/android/app/build/outputs/apk -type f -name "*.apk" -exec cp {} android-output/ \; 2>/dev/null || true
+          ls -lh android-output
       - uses: actions/upload-artifact@v4
         with:
           name: 0arc-android-apk
           path: android-output/*
           if-no-files-found: error
+
   build-ios:
     if: github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'ios'
     runs-on: macos-15
@@ -150,7 +207,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Show Apple build environment
         run: |
@@ -180,13 +237,20 @@ jobs:
           npm install --no-save --include=optional --no-audit --no-fund "$PACKAGE@$VERSION"
           node -e "require('@tauri-apps/cli'); console.log('macOS Tauri CLI native binding loaded successfully')"
 
-      - name: Generate app icons
+      - name: Generate app icons and typecheck frontend
         run: |
-          npm run generate:icons
           npx @tauri-apps/cli icon public/icons/icon-1024.png
+          npm run lint
 
       - name: Initialize Tauri iOS project
-        run: npx @tauri-apps/cli ios init --ci
+        run: |
+          npx @tauri-apps/cli ios init --ci
+          IOS_PLIST="$(find src-tauri/gen/apple -maxdepth 3 -name 'Info.plist' -print -quit)"
+          if [ -n "$IOS_PLIST" ]; then
+            /usr/libexec/PlistBuddy -c "Print :NSCameraUsageDescription" "$IOS_PLIST" >/dev/null 2>&1 || \
+              /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string '0arc uses the camera to scan encrypted Device Sync QR codes.'" "$IOS_PLIST"
+            plutil -lint "$IOS_PLIST"
+          fi
 
       # IMPORTANT: Build through the Tauri CLI, not by invoking xcodebuild directly.
       # Tauri starts the CLI options server required by its Xcode Build Rust Code phase.
@@ -198,12 +262,29 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Looking for the IPA generated by Tauri..."
-          find src-tauri/gen/apple/build -type f -name '*.ipa' -print || true
+          mkdir -p "$GITHUB_WORKSPACE/ios-output"
+          echo "Looking for the IPA or app bundle generated by Tauri..."
+          find src-tauri/gen/apple/build -maxdepth 5 -print || true
           IPA="$(find src-tauri/gen/apple/build -type f -name '*.ipa' -print -quit)"
+
           if [ -z "$IPA" ] || [ ! -s "$IPA" ]; then
-            echo "::error::Tauri iOS build completed without producing a non-empty IPA."
-            exit 1
+            APP_BUNDLE="$(find src-tauri/gen/apple/build -type d -path '*.xcarchive/Products/Applications/*.app' -print -quit)"
+            if [ -z "$APP_BUNDLE" ]; then
+              APP_BUNDLE="$(find src-tauri/gen/apple/build -type d -name '*.app' -print -quit)"
+            fi
+            if [ -z "$APP_BUNDLE" ]; then
+              echo "::error::Tauri iOS build completed without producing an IPA or .app bundle."
+              exit 1
+            fi
+            PKG_DIR="$(mktemp -d)"
+            mkdir -p "$PKG_DIR/Payload"
+            ditto "$APP_BUNDLE" "$PKG_DIR/Payload/$(basename "$APP_BUNDLE")"
+            IPA="$GITHUB_WORKSPACE/ios-output/0arc-unsigned.ipa"
+            (cd "$PKG_DIR" && zip -qry "$IPA" Payload)
+            rm -rf "$PKG_DIR"
+          else
+            cp "$IPA" "$GITHUB_WORKSPACE/ios-output/0arc-unsigned.ipa"
+            IPA="$GITHUB_WORKSPACE/ios-output/0arc-unsigned.ipa"
           fi
 
           TEMP_DIR="$(mktemp -d)"
@@ -237,10 +318,8 @@ jobs:
           fi
           lipo "$APP_PATH/$EXECUTABLE" -verify_arch arm64
 
-          mkdir -p "$GITHUB_WORKSPACE/ios-output"
-          cp "$IPA" "$GITHUB_WORKSPACE/ios-output/0arc-unsigned.ipa"
-          shasum -a 256 "$GITHUB_WORKSPACE/ios-output/0arc-unsigned.ipa"
-          ls -lh "$GITHUB_WORKSPACE/ios-output/0arc-unsigned.ipa"
+          shasum -a 256 "$IPA"
+          ls -lh "$IPA"
 
       - uses: actions/upload-artifact@v4
         with:

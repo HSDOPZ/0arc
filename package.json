@@ -11,8 +11,7 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "tauri": "tauri",
-    "generate:icons": "npx --yes sharp-cli -i public/0arc-logo.svg -o public/icons/icon-1024.png resize 1024 1024 && npx --yes sharp-cli -i public/0arc-logo.svg -o public/icons/icon-512.png resize 512 512 && npx --yes sharp-cli -i public/0arc-logo.svg -o public/icons/icon-192.png resize 192 192 && npx --yes sharp-cli -i public/0arc-logo.svg -o public/icons/favicon-32.png resize 32 32 && npx --yes sharp-cli -i public/0arc-logo.svg -o public/icons/apple-touch-icon.png resize 180 180",
-    "prebuild": "npm run generate:icons"
+    "generate:icons": "npx --yes sharp-cli -i public/0arc-logo.svg -o public/icons/icon-1024.png resize 1024 1024 && npx --yes sharp-cli -i public/0arc-logo.svg -o public/icons/icon-512.png resize 512 512 && npx --yes sharp-cli -i public/0arc-logo.svg -o public/icons/icon-192.png resize 192 192 && npx --yes sharp-cli -i public/0arc-logo.svg -o public/icons/favicon-32.png resize 32 32 && npx --yes sharp-cli -i public/0arc-logo.svg -o public/icons/apple-touch-icon.png resize 180 180"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",

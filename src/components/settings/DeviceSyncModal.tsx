@@ -658,7 +658,7 @@ export const DeviceSyncModal: React.FC<DeviceSyncModalProps> = ({ isOpen, onClos
           <div>
             <h2 className="text-sm font-semibold text-white">Device Sync</h2>
             <p className="text-[11px] text-zinc-400">
-              End-to-end encrypted transfer across Windows, Linux & Android with zero server.
+              End-to-end encrypted transfer across Windows, Linux, Android & iOS with zero server.
             </p>
           </div>
           <button

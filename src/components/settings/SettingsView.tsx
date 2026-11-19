@@ -206,7 +206,7 @@ export const SettingsView: React.FC = () => {
           <div>
             <h3 className="text-xs font-semibold text-white">Direct Device-to-Device Transfer</h3>
             <p className="text-[11px] text-zinc-400 mt-0.5">
-              Sync your archive between Windows, Linux, and Android over local Wi-Fi P2P or encrypted QR codes—no cloud account or server required.
+              Sync your archive between Windows, Linux, Android, and iOS over local Wi-Fi P2P or encrypted QR codes—no cloud account or server required.
             </p>
           </div>
 

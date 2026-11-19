@@ -43,6 +43,12 @@
     "linux": {
       "deb": { "depends": [] },
       "appimage": { "bundleMediaFramework": false }
+    },
+    "iOS": {
+      "minimumSystemVersion": "15.0"
+    },
+    "android": {
+      "minSdkVersion": 24
     }
   }
 }
